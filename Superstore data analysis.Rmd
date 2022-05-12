@@ -1,0 +1,914 @@
+---
+title: "Superstore data analysis"
+author: "Aaron Silberman"
+date: "`r Sys.Date()`"
+output: 
+  html_document: default
+runtime: shiny
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE)
+library(pacman)
+p_load(tidyverse,janitor,lubridate,ggrepel,highcharter,tinytex)
+options(tinytex.verbose = TRUE)
+comma <- function(x) format(x, digits = 2, big.mark = ",")
+```
+
+## Introduction
+
+This is an exploratory and descriptive analysis of this Superstore's
+customers, products, segments, and regions to better understand what and
+who to target or avoid in future campaigns, thereby providing
+data-driven insights.
+
+Based on the dataset, we will be attempting to answer the following, but
+also will answer more questions as they arise through analysis:
+
+1.  Which products are the best selling? Least selling?
+
+    -   Which products are the most profitable? Least profitable?
+
+2.  What product (sub)categories have the highest sales? Lowest sales?
+
+    -   Which product (sub)categories are the most profitable? Least
+        profitable?
+
+3.  What is the composition of the customer base?
+
+    -   By segment?
+
+    -   By region?
+
+## Cleaning and processing data
+
+First, I'll import the data and get acquainted. I'll remove names from
+the imported file to preserve data anonymity.
+
+```{r}
+Superstore_data <- read_csv("~/Downloads/Sample - Superstore 2.csv") %>% 
+  clean_names() %>% 
+  select(-c(7)) %>% 
+  mutate(order_date = as.Date(order_date, format = "%m/%d/%y"),
+         ship_date = as.Date(ship_date, format = "%m/%d/%y"))
+skimr::skim(Superstore_data) 
+```
+
+As we can see from the skim, each variable has a complete rate of 1, so
+we can move on knowing that the data are complete.
+
+Now we can check for data input errors in categorical data, including
+region, segment, ship mode, category, and subcategory.
+
+```{r}
+unique(Superstore_data$segment)
+unique(Superstore_data$ship_mode)
+unique(Superstore_data$region)
+unique(Superstore_data$category)
+unique(Superstore_data$sub_category)
+```
+
+The data looks to be free of input errors, so we can move on.
+
+### Variable Generation
+
+Now that the data is clean, now we'll create some variables. First,
+we'll create a turnaround time variable to calculate the amount of days
+between the order date and ship date.
+
+```{r}
+Superstore_data <- Superstore_data%>% 
+  mutate(order_date = as.Date(order_date, format = "%m/%d/%y"),
+         ship_date = as.Date(ship_date, format = "%m/%d/%y"),
+         turnaround = ship_date - order_date)
+Superstore_data %>% 
+  select(order_date, ship_date, turnaround) %>% 
+  head() %>% 
+  DT::datatable()
+```
+
+Next, we'll create a profit margin variable for each product to better
+compare profitability across products and categories.
+
+```{r}
+Superstore_data <- Superstore_data %>% 
+  mutate(margin = round(profit/sales, 2))
+Superstore_data %>% 
+  select(sales, profit, margin) %>% 
+  head() %>% 
+  DT::datatable()
+```
+
+## Analysis
+
+### Sales, Profits, and Margins
+
+First we'll see which segments, regions, categories, and subcategories
+are have the greatest sales values and are most profitable.
+
+#### Segments
+
+```{r}
+agg_by_segment <- aggregate(cbind(sales, profit) ~ segment, data = Superstore_data, sum)
+agg_by_segment <- agg_by_segment[order(agg_by_segment$profit, decreasing = T),] %>% 
+  mutate(sales = round(sales,2),
+         profit = round(profit,2)) 
+DT::datatable(agg_by_segment, caption = "Total sales and profits for each customer segment ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment) %>% 
+  summarise(value = sum(sales)) %>% 
+  mutate(value = value/sum(value, na.rm = T)*100) %>% 
+  mutate(value = round(value)) %>% 
+  arrange(-value) %>% 
+  hchart("pie",hcaes(x=segment,y=value, color=segment), name=" sales proportion%",dataLabels=list(enabled=TRUE,format="{point.name}: {point.y}%"))
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, category) %>% 
+  summarise(n=sum(sales)) %>% 
+  ggplot(aes(x=segment, y = category, fill = n)) +
+  scale_fill_distiller(direction = 1) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = paste(round(n,2))), color = "black", size = 4)+
+  labs(title = "Sales by customer segment and product category", 
+       x = "Segment", 
+       y = "Category", 
+       fill = "Sales ($)" )
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, sub_category) %>% 
+  summarise(n=sum(sales)) %>% 
+  ggplot(aes(x=segment, y = sub_category, fill = n)) +
+  scale_fill_distiller(direction = 1) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = paste(round(n,2))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Sales by customer segment and product subcategory",
+       y = "Subcategory",
+       x = "Segment",
+       fill = "Sales ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, category) %>% 
+  summarise(n=sum(profit)) %>% 
+  ggplot(aes(x=segment, y = category, fill = n)) +
+  scale_fill_distiller(direction = 1) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = paste(round(n,0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Profits by customer segment and product category",
+       x= "Segment",
+       y = "Category",
+       fill = "Profits ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, category) %>% 
+  summarise(n=mean(profit)) %>% 
+  ggplot(aes(x = segment, y = category, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Sales by customer segment and product category",
+       x = "Segment",
+       y = "Category",
+       fill = "Profit ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, sub_category) %>% 
+  summarise(n=sum(profit)) %>% 
+  ggplot(aes(x=segment, y = sub_category, fill = n)) +
+  scale_fill_distiller(direction = 1) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = paste(round(n,0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Profits by customer segment and product subcategory",
+       x= "Segment",
+       y = "Subcategory",
+       fill = "Profits ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, sub_category) %>% 
+  summarise(n=mean(profit)) %>% 
+  ggplot(aes(x=segment, y = sub_category, fill = n)) +
+  scale_fill_distiller(direction = 1) +
+  geom_tile() +
+  geom_text(aes(label = paste(round(n,0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Aveage Profits by customer segment and product subcategory",
+       x= "Segment",
+       y = "Subcategory",
+       fill = "Average Profits ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, region) %>% 
+  summarise(n=sum(sales)) %>% 
+  ggplot(aes(x = segment, y = region, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Sales by customer segment and region",
+       x = "Segment",
+       y = "Region",
+       fill = "Sales ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(segment, region) %>% 
+  summarise(n=sum(profit)) %>% 
+  ggplot(aes(x = segment, y = region, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Profit by customer region and product category",
+       x = "Segment",
+       y = "Region",
+       fill = "Profit ($)")
+```
+
+##### Observations:
+
+-   Most sales are to consumers in the East and West regions. Consumers
+    in the West were by far the most profitable, while home office
+    customers in the South were the least.
+
+    -   On average, however, home office customers' technology purchases
+        are the most profitable.
+
+-   On average, selling copiers is by far the most profitable good sold
+    across each segment, whereas selling tables nets losses across each
+    segment.
+
+-   The technology category has the greatest value of sales and profits
+    across segments, whereas furniture tends to sell the least.
+
+-   Phones and chairs have the highest value of sales in each segment,
+    and fasteners are the poorest performing.
+
+-   Phones and copiers are the most profitable in the Consumer segment,
+    while Tables and Bookcases tend to lose money.
+
+#### Regions
+
+```{r}
+agg_by_region <- aggregate(cbind(sales, profit) ~ region, data = Superstore_data, sum)
+agg_by_region <- agg_by_region[order(agg_by_region$profit, decreasing = T),] %>% 
+  mutate(sales = round(sales,2),
+         profit = round(profit, 2))
+DT::datatable(agg_by_region)
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(region) %>% 
+  summarise(value = sum(sales)) %>% 
+  mutate(value = value/sum(value, na.rm = T)*100) %>% 
+  mutate(value = round(value)) %>% 
+  arrange(-value) %>% 
+  hchart("pie",hcaes(x=region,y=value, color=region), name=" sales proportion%",dataLabels=list(enabled=TRUE,format="{point.name}: {point.y}%"))
+```
+
+As we can see, customers are pretty evenly distributed across each
+region, but sales tend to be best in the West and East regions.
+
+```{r}
+Superstore_data %>% 
+  group_by(region, category) %>% 
+  summarise(n=sum(sales)) %>% 
+  ggplot(aes(x = region, y = category, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Sales by customer region and product category",
+       x = "Region",
+       y = "Category",
+       fill = "Sales ($)")
+```
+
+Technology is the best seller across across each region except the West,
+where furniture is the best seller. Furniture sells worst in the South.
+
+```{r}
+Superstore_data %>% 
+  group_by(region, category) %>% 
+  summarise(n=sum(profit)) %>% 
+  ggplot(aes(x = region, y = category, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Profits by customer region and product category",
+       x = "Region",
+       y = "Category",
+       fill = "Profit ($)")
+```
+
+Office supplies in the West region are the most profitable, whereas
+furniture in the Central region net the Superstore a loss.
+
+```{r}
+Superstore_data %>% 
+  group_by(region, category) %>% 
+  summarise(n=mean(profit)) %>% 
+  ggplot(aes(x = region, y = category, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Average profit by customer region and product category",
+       x = "Region",
+       y = "Category",
+       fill = "Average Profit ($)")
+```
+
+Technology is, on average, the most profitable category of goods sold,
+while furniture is much less profitable.
+
+```{r}
+Superstore_data %>% 
+  group_by(region, sub_category) %>% 
+  summarise(n=sum(sales)) %>% 
+  ggplot(aes(x = region, y = sub_category, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n,0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Sales by customer region and product subcategory",
+       x = "Region",
+       y = "Subcategory",
+       fill = "Sales ($)")
+```
+
+Sales for chairs in each region tend to do best, whereas sales for
+fasteners tend not to do well.
+
+```{r}
+Superstore_data %>% 
+  group_by(region, sub_category) %>% 
+  summarise(n=sum(profit)) %>% 
+  ggplot(aes(x = region, y = sub_category, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Profits by customer region and product subcategory",
+       x = "Region",
+       y = "Category",
+       fill = "Profits ($)")
+```
+
+Interestingly, tables lose money in each region except the West.
+Copiers, Phones, and Chairs are the most profitable products.
+
+```{r}
+Superstore_data %>% 
+  group_by(region, sub_category) %>% 
+  summarise(n=mean(profit)) %>% 
+  ggplot(aes(x = region, y = sub_category, fill = n)) +
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  theme_bw()+
+  labs(title = "Average profits by customer region and product category",
+       x = "Region",
+       y = "Subcategory",
+       fill = "Average Profit ($)")
+```
+
+On average, copiers are the most profitable good sold across each
+region. Machines are only profitable in the East, and net losses in each
+other region.
+
+##### Observations:
+
+-   Most sales and profits are in the East and West.
+
+-   Technology, mostly phones, tend to outperform other product
+    categories and subcategories.
+
+-   Copiers are the most profitable, on average, across each region.
+    Tables tend to yield losses in each region.
+
+### Sales vs Profits
+
+```{r}
+Superstore_data %>% 
+  ggplot(aes(x = sales, y = profit)) +
+  geom_jitter()+
+  geom_hline(yintercept = 0, color = "red")+
+  theme_bw()+
+  labs(title = "Sales vs Profits",
+       x = "Sales",
+       y = "Profits")
+```
+
+There is generally a positive relationship between sales and profits,
+though the relationship tends to hover around a minor, positive
+relationship.
+
+### Discounts
+
+To see the impact of discounts on sales and profits, we'll cut the
+Discount variable into ranges.
+
+```{r}
+Superstore_data<- Superstore_data %>% 
+  mutate(discount = cut_width(discount, 0.1, boundary = 0))
+```
+
+Now that the discount variable has been broken down, we'll see its
+impact on each category and subcategory.
+
+#### Technology
+
+```{r}
+Superstore_data %>% 
+  filter(category == "Technology") %>% 
+  ggplot(aes(x = sales, y = profit, color = discount))+
+  geom_point()+
+  geom_hline(yintercept = 0, color = "red")+
+  scale_x_continuous("Sales", labels = scales::dollar)+
+  scale_y_continuous("Profits", labels = scales::dollar)+
+  labs(title = "Technology: Sales vs Profits by product subcategory",
+       color = "Discount rate",
+       x = "Sales",
+       y = "Profit")+
+  theme(axis.text.x = element_text(angle = 45))+
+  facet_wrap(~ sub_category)
+```
+
+Copiers, accessories, and phones tend to have a positive sales-profit
+ratio, regardless of the discount offered. However, when the discount
+offered on machines is greater than 45%, there is a negative
+relationship between sales and profits.
+
+#### Office Supplies
+
+```{r}
+Superstore_data %>% 
+  filter(category == "Office Supplies") %>% 
+  ggplot(aes(x = sales, y = profit, color = discount))+
+  geom_point()+
+  geom_hline(yintercept = 0, color = "red")+
+  scale_x_continuous("Sales", labels = scales::dollar)+
+  scale_y_continuous("Profits", labels = scales::dollar)+
+  labs(title = "Office Supplies: Sales vs Profits by product subcategory",
+       color = "Discount rate",
+       x = "Sales",
+       y = "Profit")+
+  theme(axis.text.x = element_text(angle = 45))+
+  facet_wrap(~ sub_category)
+```
+
+When the discount offered stays at or below 30%, the sales-profit ratio
+stays positive. Binders are the most sensitive to discounts.
+
+#### Furniture
+
+```{r}
+Superstore_data %>% 
+  filter(category == "Furniture") %>% 
+  ggplot(aes(x = sales, y = profit, color = discount))+
+  geom_point()+
+  geom_hline(yintercept = 0, color = "red")+
+  scale_x_continuous("Sales", labels = scales::dollar)+
+  scale_y_continuous("Profits", labels = scales::dollar)+
+  labs(title = "Furniture: Sales vs Profits by product subcategory",
+       color = "Discount rate",
+       x = "Sales",
+       y = "Profits")+
+  theme(axis.text.x = element_text(angle = 45))+
+  facet_wrap(~ sub_category)
+```
+
+Furniture tends to retain a positive sales-profit ratio only if the
+discount offered to customers is no more than 15%.
+
+#### Discounts vs Profits
+
+Now we'll look at how discounts affect profits across each product
+subcategory.
+
+```{r}
+margins <- Superstore_data %>% 
+  group_by(sub_category, discount) %>% 
+  summarise(n= sum(mean(profit))) %>% 
+  spread(discount, n, NA)
+profit_margins <- margins 
+for (i in 3:7) {
+  profit_margins[,i-1] = (margins[,i]-abs(margins[,i-1]))/abs(margins[,i-1])
+}
+DT::datatable(profit_margins)
+```
+
+```{r}
+Superstore_data%>%
+  group_by(sub_category, discount) %>% 
+  summarise(n= sum(mean(profit))) %>% 
+  ggplot(aes(x = discount, y = n))+
+  geom_point(stat = "identity", show.legend = F)+
+  geom_line(aes(group = sub_category))+
+  geom_hline(yintercept = 0, color = "red")+
+  scale_y_continuous("Profits", labels = scales::dollar)+
+  facet_wrap(~sub_category, ncol = 3)+
+  labs(title = "Discount vs Profit change across product sub-categories",
+       x = "Discount offered")+
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+```{r}
+Superstore_data%>%
+  group_by(sub_category, discount) %>% 
+  summarise(n= (mean(margin))) %>% 
+  ggplot(aes(x = discount, y = n))+
+  geom_point(stat = "identity", show.legend = F)+
+  geom_line(aes(group = sub_category))+
+  geom_hline(yintercept = 0, color = "red")+
+  scale_y_continuous("Profit Margin", labels = scales::percent)+
+  facet_wrap(~sub_category, ncol = 3)+
+  labs(title = "Discount vs Profit Margin change across product sub-categories",
+       x = "Discount offered",
+       color = "Product Subcategory")+
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+##### Observation:
+
+-   The margins of supplies were most greatly affected in the 0-15%
+    discount range. Margins tend to worsen as the discount offered
+    increases.
+-   The profits of copiers and machines are most sensitive to discount
+    increases.
+-   Profit margins significantly decrease as discount rates increase.
+    Binders, appliances, and bookcases see the largest decreases in
+    profit margin.
+
+### Time of year
+
+Now we'll investigate whether the month of customers' orders affect
+sales, profits, and margins.
+
+```{r}
+Superstore_data<- Superstore_data %>% 
+  mutate(month = month(order_date, label = T))
+```
+
+```{r}
+agg_by_month <- aggregate(cbind(sales, profit) ~ month, data = Superstore_data, sum)
+agg_by_month <- agg_by_month[order(agg_by_month$profit, decreasing = T),] %>% 
+  mutate(sales = round(sales, 2),
+         profit = round(profit, 2))
+DT::datatable(agg_by_month)
+```
+
+#### Category
+
+```{r}
+Superstore_data %>% 
+  group_by(month, category) %>% 
+  summarise(n = sum(sales)) %>% 
+  ggplot(aes(x = category, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Sales totals per month by Product Category",
+       x = "Category",
+       y = "Month",
+       fill = "Sales ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(month, category) %>% 
+  summarise(n = sum(profit)) %>% 
+  ggplot(aes(x = category, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Profit totals per month by Product Category",
+       x = "Category",
+       y = "Month",
+       fill = "Profit ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(month, category) %>% 
+  summarise(n = mean(profit)) %>% 
+  ggplot(aes(x = category, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Average Profit per month by Product Category",
+       x = "Category",
+       y = "Month",
+       fill = "Average Profit ($)")
+```
+
+##### Observations:
+
+-   Sales for technology in November and furniture in December are
+    highest, while furniture sales are lowest in February.
+
+-   Items tend to become more profitable as the year progresses, likely
+    due to customers saving money after the holiday season.
+
+    -   Technology profits soared in March and October
+
+#### Region
+
+```{r}
+Superstore_data %>% 
+  group_by(month, region) %>% 
+  summarise(n = sum(sales)) %>% 
+  ggplot(aes(x = region, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Sales totals per month by Region",
+       x = "Region",
+       y = "Month",
+       fill = "Sales ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(month, region) %>% 
+  summarise(n = sum(profit)) %>% 
+  ggplot(aes(x = region, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Profit totals per month by Region",
+       x = "Region",
+       y = "Month",
+       fill = "Profit ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(month, region) %>% 
+  summarise(n = mean(profit)) %>% 
+  ggplot(aes(x = region, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Average Profits per month by Region",
+       x = "Region",
+       y = "Month",
+       fill = "Average Profit ($)")
+```
+
+##### Observations:
+
+-   November in the East outsells all regions in each month. February in
+    the Central region is the most under-performing.
+
+-   March in the West and November in the East are the most profitable
+    months across each region. July in the Central region nets a loss
+
+-   October tends to be a profitable month in the Central and East
+    regions, but not as much in the South or West. March in the South is
+    the most profitable month across each region.
+
+#### Segments
+
+```{r}
+Superstore_data %>% 
+  group_by(month, segment) %>% 
+  summarise(n = sum(sales)) %>% 
+  ggplot(aes(x = segment, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Sales totals per month by Segment",
+       x = "Segment",
+       y = "Month",
+       fill = "Sales ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(month, segment) %>% 
+  summarise(n = sum(profit)) %>% 
+  ggplot(aes(x = segment, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Profit totals per month by Segment",
+       x = "Segment",
+       y = "Month",
+       fill = "Profits ($)")
+```
+
+```{r}
+Superstore_data %>% 
+  group_by(month, segment) %>% 
+  summarise(n = mean(profit)) %>% 
+  ggplot(aes(x = segment, y = month, fill = n))+
+  scale_fill_distiller(direction = 1)+
+  geom_tile()+
+  geom_text(aes(label = paste(round(n, 0))), color = "black", size = 4)+
+  labs(title = "Average Profitss per month by Segment",
+       x = "Segment",
+       y = "Month",
+       fill = "Average Profit ($)")
+```
+
+##### Observation:
+
+-   Consumers out-purchase all other customer segments in September,
+    November and December.
+
+-   Total profits for consumers are best in September and December.
+
+-   On average, home office customers are the most profitable in January
+    and October, whereas they are least profitable across segments and
+    months in April.
+
+### Shipping
+
+First we'll look at shipping mode and its associated turnaround time.
+
+```{r}
+Superstore_data %>% 
+  ggplot(aes(x = reorder(ship_mode, turnaround, median), turnaround))+
+  geom_boxplot()+
+  scale_y_continuous()+
+  labs(title = "Shipping Mode and Order Turnaround Time",
+       x = "Shipping Mode",
+       y = "Turnaround Time (days)")
+```
+
+Now we'll look at differences across market segments and shipping mode
+preferences.
+
+```{r}
+Superstore_data %>% 
+  group_by(segment) %>% 
+  ggplot(aes(x = segment, fill = ship_mode))+
+  geom_bar(position = 'fill')+
+  coord_flip()+
+  labs(title = "Market Segment vs Shipping Mode Preference",
+       y = "Proportion of customer base",
+       x = "Customer Segment",
+       fill = "Ship mode")
+```
+
+As we can see, customers tend to opt for standard class shipping,
+regardless of customer segment.
+
+Now we'll look for differences across product subcategories and shipping
+mode preferences.
+
+```{r}
+Superstore_data %>% 
+  group_by(sub_category) %>% 
+  ggplot(aes(x = sub_category, fill = ship_mode))+
+  geom_bar(position = 'fill')+
+  coord_flip()+
+  labs(title = "Product Subcategory vs Shipping Mode Preferences",
+       x = "Product Subcategory",
+       y = "Proportion of Products Sold",
+       fill = "Ship mode")
+```
+
+Product subcategories also do not seem to affect shipping mode
+preferences, as customers still predominately opt for standard class
+shipping.
+
+### Statistical and predictive analysis
+
+```{r}
+summary(lm(profit ~ discount * sub_category * sales, data = Superstore_data))
+superstore_stats <- (lm(profit ~ discount * sub_category * sales, data = Superstore_data)) 
+```
+
+The interaction of discount offered, product subcategory, and sales
+totals significantly predicts profits (R^2^ = 95.64).
+
+#### Profits and Quantity Sold
+
+We'll use the statistical analysis to make predictions about profits for
+the firm
+
+```{r}
+Superstore_data <- Superstore_data %>% 
+  mutate(prediction = predict(superstore_stats),
+         residuals = residuals(superstore_stats))
+```
+
+```{r}
+Superstore_data %>% 
+  filter(sub_category != 'Copiers') %>% 
+  ggplot(aes(x = quantity, y = prediction)) + 
+  geom_hline(aes(yintercept = 0, color = "red"))+
+  geom_smooth(formula = y~s(x, bs = "cs", k = 9), method = 'gam')+
+  theme(legend.position = "")+
+  scale_y_continuous("Predicted Profit", labels = scales::dollar)+
+  facet_wrap(~sub_category)+
+  labs(title = "Quantity sold vs Predicted Profits by product subcategory",
+       x = "Quantity Sold")
+```
+
+```{r}
+Superstore_data %>% 
+  filter(sub_category == 'Copiers') %>% 
+  ggplot(aes(x = quantity, y = prediction)) + 
+  geom_hline(aes(yintercept = 0, color = "red"))+
+  geom_smooth(formula = y~s(x, bs = "cs", k = 9), method = 'gam')+
+  theme(legend.position = "")+
+  scale_y_continuous("Predicted Profit", labels = scales::dollar)+
+  labs(title = "Quantity sold vs Predicted Profits for Copiers",
+       x = "Quantity Sold")
+```
+
+For most product subcategories, excluding tables, more sales predict
+higher products. Copiers are by far the most profitable.
+
+#### Discounts and predicted profits
+
+```{r}
+Superstore_data %>% 
+  group_by(sub_category, discount) %>% 
+  ggplot(aes(x = discount, y = prediction)) + 
+  geom_hline(aes(yintercept = 0, color = "black"))+
+  geom_col(aes(fill = prediction))+
+  theme_bw()+
+  theme(legend.position = "")+
+  scale_y_continuous("Predicted Profit", labels = scales::dollar)+
+  facet_wrap(~sub_category, ncol = 3)+
+  labs(title = "Discount offered vs Predicted Profits by product subcategory",
+       x = "Discount")+
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+Across product subcategories, most stay profitable until the discount
+offered is greater than 15-30%.
+
+## Conclusions and Recommendations
+
+### Conclusions:
+
+1.  Most sales and profits are to Consumers, and in the Eastern and
+    Western Regions.
+
+2.  Technology tends to have the best total and average sales and
+    profits. Furniture tends to under-perform relative to other product
+    categories.
+
+    1.  Copiers and phones are the most profitable, and tables and
+        machines tend to net losses.
+
+3.  Most products remain profitable so long as the discount offered is
+    no more than 30 percent off.
+
+    1.  Machines see the most drastic decreases in profit margin when
+        the discount offered increases.
+
+4.  Sales and profits tend to be best across each region and segment in
+    September, November, and December, likely due to back to school and
+    holiday shopping.
+
+5.  Customers prefer standard shipping to other shipping methods.
+
+6.  Using the linear model, we can confidently predict that greater
+    quantity sold will generate more profits for most product
+    subcategories, aside from tables.
+
+### Recommendations:
+
+1.  Maintain as is for the Consumer segment, and East and West regions.
+    Give customers in remaining regions and segments incentives to shop
+    with 15-30% discounts to increase spending without sacrificing
+    profits too much.
+    1.  Keep prices and quantities as is for September, November, and
+        December. Incentivize spending in other months with small
+        discounts.
+2.  Copiers are by far the most profitable, and become more profitable
+    as more are sold, so there is minimal need for providing
+    discounts. 1. Consider not selling tables anymore. The margins are
+    bad and tend to lose the Superstore money.
