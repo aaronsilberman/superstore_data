@@ -3,7 +3,7 @@ title: "Superstore data analysis"
 author: "Aaron Silberman"
 date: "`r Sys.Date()`"
 output: 
-  html_document: default
+  rmarkdown::github_document
 runtime: shiny
 editor_options: 
   markdown: 
